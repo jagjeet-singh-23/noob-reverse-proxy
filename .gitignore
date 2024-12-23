@@ -1,5 +1,5 @@
 # add node modules to gitignore
-./node_modules
+node_modules/
 
 # add dist folder to gitignore
-./dist
+dist/
