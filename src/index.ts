@@ -1,5 +1,7 @@
 import { program } from "commander";
 import { parseYAMLConfig, validateConfig } from "./config";
+import { createServer } from "./server";
+import os from "node:os";
 
 async function main() {
   program.option("--config <path>");
@@ -12,7 +14,11 @@ async function main() {
       await parseYAMLConfig(options.config),
     );
 
-    console.log(validatedConfig);
+    const port = validatedConfig.server.listen;
+    const workerCount = validatedConfig.server.workers ?? os.cpus().length;
+    const config = validatedConfig;
+
+    await createServer({ port, workerCount, config });
   }
 }
 
