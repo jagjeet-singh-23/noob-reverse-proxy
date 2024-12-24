@@ -3,11 +3,11 @@ server:
   workers: 4
 
   upstreams:
-    - id: node1
-      url: http://localhost:8001
+    - id: upstream1
+      url: jsonplaceholder.typicode.com
 
-    - id: node2
-      url: http://localhost:8002
+    - id: upstream2
+      url: dummyjson.com
 
   headers:
     - key: "x-forward-for"
@@ -17,11 +17,10 @@ server:
       value: "Bearer xyz"
 
   rules:
+    - path: /test
+      upstreams:
+        - upstream2
+
     - path: /
       upstreams:
-        - node1
-        - node2
-
-    - path: /admin
-      upstreams:
-        - node2
+        - upstream1
