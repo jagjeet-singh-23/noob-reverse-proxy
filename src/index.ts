@@ -9,17 +9,19 @@ async function main() {
 
   const options = program.opts();
 
-  if (options && "config" in options) {
-    const validatedConfig = await validateConfig(
-      await parseYAMLConfig(options.config),
-    );
-
-    const port = validatedConfig.server.listen;
-    const workerCount = validatedConfig.server.workers ?? os.cpus().length;
-    const config = validatedConfig;
-
-    await createServer({ port, workerCount, config });
+  if (!options || ("config" in options && !options.config)) {
+    throw new Error("No config file provided");
   }
+
+  const validatedConfig = await validateConfig(
+    await parseYAMLConfig(options.config),
+  );
+
+  const port = validatedConfig.server.listen;
+  const workerCount = validatedConfig.server.workers ?? os.cpus().length;
+  const config = validatedConfig;
+
+  await createServer({ port, workerCount, config });
 }
 
 main();

@@ -43,7 +43,6 @@ function createServer(config) {
                 worker.send(JSON.stringify(payload));
                 worker.on("message", (workerReply) => __awaiter(this, void 0, void 0, function* () {
                     const reply = yield server_schema_1.workerMessageReplySchema.parseAsync(JSON.parse(workerReply));
-                    console.log(reply);
                     if (reply.errorCode) {
                         res.writeHead(parseInt(reply.errorCode));
                         res.end(reply.error);
@@ -78,17 +77,20 @@ function createServer(config) {
                     if (process.send)
                         return process.send(JSON.stringify(reply));
                 }
-                const upstreamID = rule === null || rule === void 0 ? void 0 : rule.upstreams[0];
-                const upstream = config.server.upstreams.find((e) => e.id === upstreamID);
-                // handle 404 error
-                if (!upstream) {
+                // Round Robin Upstream Selection
+                let currentUpstreamIndex = 0;
+                const upstreams = rule === null || rule === void 0 ? void 0 : rule.upstreams.map((upstreamId) => config.server.upstreams.find((u) => u.id === upstreamId)).filter(Boolean);
+                if ((upstreams === null || upstreams === void 0 ? void 0 : upstreams.length) === 0) {
                     const reply = {
                         errorCode: "500",
-                        error: `Upstream not found: ${upstream}`,
+                        error: `No valid upstreams found for rule: ${rule}`,
                     };
                     if (process.send)
                         return process.send(JSON.stringify(reply));
                 }
+                const activeUpstreams = new Set(rule === null || rule === void 0 ? void 0 : rule.upstreams);
+                const upstream = upstreams[currentUpstreamIndex];
+                currentUpstreamIndex = (currentUpstreamIndex + 1) % upstreams.length;
                 const request = node_http_1.default.request({ host: upstream === null || upstream === void 0 ? void 0 : upstream.url, path: requestURL }, (proxyRes) => {
                     let body = "";
                     proxyRes.on("data", (chunk) => (body += chunk));
@@ -99,6 +101,54 @@ function createServer(config) {
                         if (process.send)
                             return process.send(JSON.stringify(reply));
                     });
+                });
+                const selectNextUpstream = (activeUpstreams, allUpstreams) => {
+                    for (const upstreamId of allUpstreams) {
+                        if (activeUpstreams.has(upstreamId)) {
+                            return config.server.upstreams.find((u) => u.id === upstreamId);
+                        }
+                    }
+                    return null; // No active upstreams available
+                };
+                // Modify the request handling to use the selectNextUpstream function
+                request.on("error", (err) => {
+                    console.error(`Request to upstream ${upstream === null || upstream === void 0 ? void 0 : upstream.id} failed: ${err.message}`);
+                    activeUpstreams.delete(upstream.id); // Remove failed upstream from active list
+                    // Select the next upstream if the current one fails
+                    const nextUpstream = selectNextUpstream(activeUpstreams, rule.upstreams);
+                    // handle if there are no active upstreams available
+                    if (!nextUpstream) {
+                        const reply = {
+                            errorCode: "500",
+                            error: `No active upstreams available for rule: ${rule}`,
+                        };
+                        if (process.send)
+                            return process.send(JSON.stringify(reply));
+                    }
+                    else {
+                        // retry the request with the next available upstream
+                        const retryRequest = node_http_1.default.request({ host: nextUpstream.url, path: requestURL }, (proxyRes) => {
+                            let body = "";
+                            proxyRes.on("data", (chunk) => (body += chunk));
+                            proxyRes.on("end", () => {
+                                const reply = {
+                                    data: body,
+                                };
+                                if (process.send)
+                                    return process.send(JSON.stringify(reply));
+                            });
+                        });
+                        retryRequest.on("error", (retryErr) => {
+                            console.error(`Retry request to upstream ${nextUpstream.id} failed: ${retryErr.message}`);
+                            const reply = {
+                                errorCode: "500",
+                                error: `No active upstreams available for rule: ${rule}`,
+                            };
+                            if (process.send)
+                                return process.send(JSON.stringify(reply));
+                        });
+                        retryRequest.end();
+                    }
                 });
                 request.end();
             }));

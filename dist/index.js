@@ -22,13 +22,14 @@ function main() {
         commander_1.program.option("--config <path>");
         commander_1.program.parse();
         const options = commander_1.program.opts();
-        if (options && "config" in options) {
-            const validatedConfig = yield (0, config_1.validateConfig)(yield (0, config_1.parseYAMLConfig)(options.config));
-            const port = validatedConfig.server.listen;
-            const workerCount = (_a = validatedConfig.server.workers) !== null && _a !== void 0 ? _a : node_os_1.default.cpus().length;
-            const config = validatedConfig;
-            yield (0, server_1.createServer)({ port, workerCount, config });
+        if (!options || ("config" in options && !options.config)) {
+            throw new Error("No config file provided");
         }
+        const validatedConfig = yield (0, config_1.validateConfig)(yield (0, config_1.parseYAMLConfig)(options.config));
+        const port = validatedConfig.server.listen;
+        const workerCount = (_a = validatedConfig.server.workers) !== null && _a !== void 0 ? _a : node_os_1.default.cpus().length;
+        const config = validatedConfig;
+        yield (0, server_1.createServer)({ port, workerCount, config });
     });
 }
 main();
