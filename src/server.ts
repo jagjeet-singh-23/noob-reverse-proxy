@@ -7,7 +7,6 @@ import {
   workerMessageReplySchema,
   WorkerMessageReplyType,
 } from "./server-schema";
-import { error } from "node:console";
 
 interface CreateServerConfig {
   port: number;
@@ -64,6 +63,21 @@ export async function createServer(config: CreateServerConfig) {
     server.listen(port, () => {
       console.log(
         `Reverse Proxy Server is running on http://localhost:${port}`,
+      );
+    });
+
+    cluster.on("exit", (worker) => {
+      // Remove the dead worker
+      console.log(`Worker ${worker.process.pid} died`);
+      const index = WORKER_POOL.indexOf(worker);
+
+      if (index === -1) WORKER_POOL.splice(index, 1);
+
+      // Respawn the worker
+      const newWorker = cluster.fork({ config: JSON.stringify(config.config) });
+      WORKER_POOL.push(newWorker);
+      console.log(
+        `New worker process spawned with id: ${newWorker.process.pid}`,
       );
     });
   } else {
