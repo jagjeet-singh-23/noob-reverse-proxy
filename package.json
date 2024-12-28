@@ -12,7 +12,9 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
+    "express": "^4.21.2",
     "tsc-watch": "^6.2.1"
   },
   "dependencies": {

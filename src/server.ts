@@ -28,7 +28,7 @@ export async function createServer(config: CreateServerConfig) {
     }
 
     const server = http.createServer((req, res) => {
-      // select a random worker
+      // Select a random worker
       const index = Math.floor(Math.random() * WORKER_POOL.length);
       const worker = WORKER_POOL.at(index);
 
@@ -71,7 +71,7 @@ export async function createServer(config: CreateServerConfig) {
       console.log(`Worker ${worker.process.pid} died`);
       const index = WORKER_POOL.indexOf(worker);
 
-      if (index === -1) WORKER_POOL.splice(index, 1);
+      if (index !== -1) WORKER_POOL.splice(index, 1);
 
       // Respawn the worker
       const newWorker = cluster.fork({ config: JSON.stringify(config.config) });
@@ -85,6 +85,49 @@ export async function createServer(config: CreateServerConfig) {
     const parseYAMLConfig = JSON.parse(process.env.config as string);
     const config = await rootConfigSchema.parseAsync(parseYAMLConfig);
 
+    // Health check function
+    const checkUpstreamHealth = async (upstream: {
+      id: string;
+      url: string;
+    }) => {
+      try {
+        const healthCheckRequest = http.request(
+          { host: upstream.url, path: "/health-check" }, // Assuming a health check endpoint
+          (proxyRes) => {
+            if (proxyRes.statusCode === 200) {
+              // Mark as active if health check is successful
+              activeUpstreams.add(upstream.id);
+            } else {
+              // Mark as inactive if health check fails
+              activeUpstreams.delete(upstream.id);
+            }
+          },
+        );
+
+        healthCheckRequest.on("error", () => {
+          // Mark as inactive on error
+          activeUpstreams.delete(upstream.id);
+        });
+
+        healthCheckRequest.end();
+      } catch (error: any) {
+        console.error(
+          `Health check failed for upstream ${upstream.id}: ${error.message}`,
+        );
+      }
+    };
+
+    // Periodically check the health of upstreams
+    const activeUpstreams = new Set<string>(
+      config.server.upstreams.map((u) => u.id),
+    );
+
+    setInterval(() => {
+      config.server.upstreams.forEach((upstream) => {
+        checkUpstreamHealth(upstream);
+      });
+    }, 30000); // Check every 30 seconds
+
     process.on("message", async (message: string) => {
       const validatedMessage = await workerMessageSchema.parseAsync(
         JSON.parse(message),
@@ -96,7 +139,7 @@ export async function createServer(config: CreateServerConfig) {
         return regex.test(requestURL);
       });
 
-      // handle 404 error
+      // Handle 404 error
       if (!rule) {
         const reply: WorkerMessageReplyType = {
           errorCode: "404",
@@ -124,10 +167,22 @@ export async function createServer(config: CreateServerConfig) {
         if (process.send) return process.send(JSON.stringify(reply));
       }
 
-      const activeUpstreams = new Set<string>(rule?.upstreams);
+      // Filter active upstreams
+      const activeUpstreamList = upstreams!.filter((upstream) =>
+        activeUpstreams.has(upstream!.id),
+      );
 
-      const upstream = upstreams![currentUpstreamIndex];
-      currentUpstreamIndex = (currentUpstreamIndex + 1) % upstreams!.length;
+      if (activeUpstreamList.length === 0) {
+        const reply: WorkerMessageReplyType = {
+          errorCode: "500",
+          error: `No active upstreams available for rule: ${rule}`,
+        };
+        if (process.send) return process.send(JSON.stringify(reply));
+      }
+
+      const upstream = activeUpstreamList[currentUpstreamIndex];
+      currentUpstreamIndex =
+        (currentUpstreamIndex + 1) % activeUpstreamList.length;
 
       const request = http.request(
         { host: upstream?.url, path: requestURL },
@@ -143,19 +198,7 @@ export async function createServer(config: CreateServerConfig) {
         },
       );
 
-      const selectNextUpstream = (
-        activeUpstreams: Set<string>,
-        allUpstreams: string[],
-      ) => {
-        for (const upstreamId of allUpstreams) {
-          if (activeUpstreams.has(upstreamId)) {
-            return config.server.upstreams.find((u) => u.id === upstreamId);
-          }
-        }
-        return null; // No active upstreams available
-      };
-
-      // Modify the request handling to use the selectNextUpstream function
+      // Handle request errors
       request.on("error", (err) => {
         console.error(
           `Request to upstream ${upstream?.id} failed: ${err.message}`,
@@ -163,12 +206,10 @@ export async function createServer(config: CreateServerConfig) {
         activeUpstreams.delete(upstream!.id); // Remove failed upstream from active list
 
         // Select the next upstream if the current one fails
-        const nextUpstream = selectNextUpstream(
-          activeUpstreams,
-          rule!.upstreams,
-        );
+        const nextUpstream =
+          activeUpstreamList[currentUpstreamIndex % activeUpstreamList.length];
 
-        // handle if there are no active upstreams available
+        // Handle if there are no active upstreams available
         if (!nextUpstream) {
           const reply: WorkerMessageReplyType = {
             errorCode: "500",
@@ -176,7 +217,7 @@ export async function createServer(config: CreateServerConfig) {
           };
           if (process.send) return process.send(JSON.stringify(reply));
         } else {
-          // retry the request with the next available upstream
+          // Retry the request with the next available upstream
           const retryRequest = http.request(
             { host: nextUpstream.url, path: requestURL },
             (proxyRes) => {
