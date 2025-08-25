@@ -29,7 +29,7 @@ function createServer(config) {
                 console.log(`Master Node Spinned up worker ${i}`);
             }
             const server = node_http_1.default.createServer((req, res) => {
-                // select a random worker
+                // Select a random worker
                 const index = Math.floor(Math.random() * WORKER_POOL.length);
                 const worker = WORKER_POOL.at(index);
                 if (!worker)
@@ -56,11 +56,53 @@ function createServer(config) {
             server.listen(port, () => {
                 console.log(`Reverse Proxy Server is running on http://localhost:${port}`);
             });
+            node_cluster_1.default.on("exit", (worker) => {
+                // Remove the dead worker
+                console.log(`Worker ${worker.process.pid} died`);
+                const index = WORKER_POOL.indexOf(worker);
+                if (index !== -1)
+                    WORKER_POOL.splice(index, 1);
+                // Respawn the worker
+                const newWorker = node_cluster_1.default.fork({ config: JSON.stringify(config.config) });
+                WORKER_POOL.push(newWorker);
+                console.log(`New worker process spawned with id: ${newWorker.process.pid}`);
+            });
         }
         else {
             console.log(`Worker ${process.pid} started`);
             const parseYAMLConfig = JSON.parse(process.env.config);
             const config = yield config_schema_1.rootConfigSchema.parseAsync(parseYAMLConfig);
+            // Health check function
+            const checkUpstreamHealth = (upstream) => __awaiter(this, void 0, void 0, function* () {
+                try {
+                    const healthCheckRequest = node_http_1.default.request({ host: upstream.url, path: "/health-check" }, // Assuming a health check endpoint
+                    (proxyRes) => {
+                        if (proxyRes.statusCode === 200) {
+                            // Mark as active if health check is successful
+                            activeUpstreams.add(upstream.id);
+                        }
+                        else {
+                            // Mark as inactive if health check fails
+                            activeUpstreams.delete(upstream.id);
+                        }
+                    });
+                    healthCheckRequest.on("error", () => {
+                        // Mark as inactive on error
+                        activeUpstreams.delete(upstream.id);
+                    });
+                    healthCheckRequest.end();
+                }
+                catch (error) {
+                    console.error(`Health check failed for upstream ${upstream.id}: ${error.message}`);
+                }
+            });
+            // Periodically check the health of upstreams
+            const activeUpstreams = new Set(config.server.upstreams.map((u) => u.id));
+            setInterval(() => {
+                config.server.upstreams.forEach((upstream) => {
+                    checkUpstreamHealth(upstream);
+                });
+            }, 30000); // Check every 30 seconds
             process.on("message", (message) => __awaiter(this, void 0, void 0, function* () {
                 const validatedMessage = yield server_schema_1.workerMessageSchema.parseAsync(JSON.parse(message));
                 const requestURL = validatedMessage.url;
@@ -68,7 +110,7 @@ function createServer(config) {
                     const regex = new RegExp(`^${e.path}.*$`);
                     return regex.test(requestURL);
                 });
-                // handle 404 error
+                // Handle 404 error
                 if (!rule) {
                     const reply = {
                         errorCode: "404",
@@ -88,9 +130,19 @@ function createServer(config) {
                     if (process.send)
                         return process.send(JSON.stringify(reply));
                 }
-                const activeUpstreams = new Set(rule === null || rule === void 0 ? void 0 : rule.upstreams);
-                const upstream = upstreams[currentUpstreamIndex];
-                currentUpstreamIndex = (currentUpstreamIndex + 1) % upstreams.length;
+                // Filter active upstreams
+                const activeUpstreamList = upstreams.filter((upstream) => activeUpstreams.has(upstream.id));
+                if (activeUpstreamList.length === 0) {
+                    const reply = {
+                        errorCode: "500",
+                        error: `No active upstreams available for rule: ${rule}`,
+                    };
+                    if (process.send)
+                        return process.send(JSON.stringify(reply));
+                }
+                const upstream = activeUpstreamList[currentUpstreamIndex];
+                currentUpstreamIndex =
+                    (currentUpstreamIndex + 1) % activeUpstreamList.length;
                 const request = node_http_1.default.request({ host: upstream === null || upstream === void 0 ? void 0 : upstream.url, path: requestURL }, (proxyRes) => {
                     let body = "";
                     proxyRes.on("data", (chunk) => (body += chunk));
@@ -102,21 +154,13 @@ function createServer(config) {
                             return process.send(JSON.stringify(reply));
                     });
                 });
-                const selectNextUpstream = (activeUpstreams, allUpstreams) => {
-                    for (const upstreamId of allUpstreams) {
-                        if (activeUpstreams.has(upstreamId)) {
-                            return config.server.upstreams.find((u) => u.id === upstreamId);
-                        }
-                    }
-                    return null; // No active upstreams available
-                };
-                // Modify the request handling to use the selectNextUpstream function
+                // Handle request errors
                 request.on("error", (err) => {
                     console.error(`Request to upstream ${upstream === null || upstream === void 0 ? void 0 : upstream.id} failed: ${err.message}`);
                     activeUpstreams.delete(upstream.id); // Remove failed upstream from active list
                     // Select the next upstream if the current one fails
-                    const nextUpstream = selectNextUpstream(activeUpstreams, rule.upstreams);
-                    // handle if there are no active upstreams available
+                    const nextUpstream = activeUpstreamList[currentUpstreamIndex % activeUpstreamList.length];
+                    // Handle if there are no active upstreams available
                     if (!nextUpstream) {
                         const reply = {
                             errorCode: "500",
@@ -126,7 +170,7 @@ function createServer(config) {
                             return process.send(JSON.stringify(reply));
                     }
                     else {
-                        // retry the request with the next available upstream
+                        // Retry the request with the next available upstream
                         const retryRequest = node_http_1.default.request({ host: nextUpstream.url, path: requestURL }, (proxyRes) => {
                             let body = "";
                             proxyRes.on("data", (chunk) => (body += chunk));

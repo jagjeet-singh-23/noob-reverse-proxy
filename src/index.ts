@@ -1,7 +1,13 @@
 import { program } from "commander";
-import { parseYAMLConfig, validateConfig } from "./config";
-import { createServer } from "./server";
-import os from "node:os";
+import os from "os";
+import { parseYAMLConfig, validateConfig } from "./core/config";
+import { ProxyServerConfig } from "./core/models";
+import { ClusterManager } from "./sever/clusterManager";
+
+export async function createServer(config: ProxyServerConfig): Promise<void> {
+  const clusterManager = new ClusterManager(config);
+  await clusterManager.start();
+}
 
 async function main() {
   program.option("--config <path>");

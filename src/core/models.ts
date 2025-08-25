@@ -1,5 +1,29 @@
 import { z } from "zod";
 
+export interface Upstream {
+  id: string;
+  url: string;
+}
+
+export interface Rule {
+  path: string;
+  upstreams: string[];
+}
+
+export interface ServerConfig {
+  upstreams: Upstream[];
+  rules: Rule[];
+  loadbalancer?: "round-robin" | "random";
+}
+
+export interface ProxyServerConfig {
+  port: number;
+  workerCount: number;
+  config: {
+    server: ServerConfig;
+  }
+}
+
 export const workerMessageSchema = z.object({
   requestType: z.enum(["HTTP"]),
   headers: z.any(),
