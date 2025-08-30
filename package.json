@@ -15,7 +15,8 @@
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
     "express": "^4.21.2",
-    "tsc-watch": "^6.2.1"
+    "tsc-watch": "^6.2.1",
+    "tsx": "^4.20.5"
   },
   "dependencies": {
     "commander": "^12.1.0",

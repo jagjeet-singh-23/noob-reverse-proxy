@@ -3,3 +3,8 @@ node_modules/
 
 # add dist folder to gitignore
 dist/
+
+**/*.log
+**/*.jmx
+
+pnpm-lock.yaml

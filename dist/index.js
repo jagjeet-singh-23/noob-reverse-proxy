@@ -32,11 +32,14 @@ function main() {
         if (!options || ("config" in options && !options.config)) {
             throw new Error("No config file provided");
         }
-        const validatedConfig = yield (0, config_1.validateConfig)(yield (0, config_1.parseYAMLConfig)(options.config));
+        const parsedConfig = yield (0, config_1.parseYAMLConfig)(options.config);
+        const validatedConfig = yield (0, config_1.validateConfig)(parsedConfig);
         const port = validatedConfig.server.listen;
         const workerCount = (_a = validatedConfig.server.workers) !== null && _a !== void 0 ? _a : os_1.default.cpus().length;
         const config = validatedConfig;
         yield createServer({ port, workerCount, config });
     });
 }
-main();
+main().catch(error => {
+    process.exit(1);
+});

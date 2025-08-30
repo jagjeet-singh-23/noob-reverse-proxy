@@ -1,12 +1,12 @@
 server:
   listen: 3001 # Port where the mock server will run
-  workers: 1 # Number of workers (not used in the mock server but included for consistency)
+  workers: 10
 
   upstreams:
     - id: upstream1
-      url: http://localhost:3001/data # Mock endpoint for successful response
+      url: localhost:3001/data # Mock endpoint for successful response
     - id: upstream2
-      url: http://localhost:3001/fail # Mock endpoint for failure
+      url: localhost:3001/fail # Mock endpoint for failure
 
   headers:
     - key: "x-forward-for"
