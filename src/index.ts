@@ -19,10 +19,8 @@ async function main() {
     throw new Error("No config file provided");
   }
 
-  const validatedConfig = await validateConfig(
-    await parseYAMLConfig(options.config),
-  );
-
+  const parsedConfig = await parseYAMLConfig(options.config);
+  const validatedConfig = await validateConfig(parsedConfig);
   const port = validatedConfig.server.listen;
   const workerCount = validatedConfig.server.workers ?? os.cpus().length;
   const config = validatedConfig;
@@ -30,4 +28,6 @@ async function main() {
   await createServer({ port, workerCount, config });
 }
 
-main();
+main().catch(error => {
+  process.exit(1);
+});

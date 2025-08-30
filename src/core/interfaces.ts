@@ -34,3 +34,11 @@ export interface IHttpServer {
   start(): Promise<void>;
   stop(): Promise<void>;
 }
+
+export interface ParsedUpstreamOptions {
+  hostname: string;
+  port: number;
+  path: string;
+  method: string;
+}
+

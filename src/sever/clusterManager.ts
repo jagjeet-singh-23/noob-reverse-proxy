@@ -5,7 +5,9 @@ import { HttpServer } from "./httpServer";
 import { WorkerManager } from "./workerManager";
 
 export class ClusterManager {
-  constructor(private config: ProxyServerConfig) { }
+  constructor(private config: ProxyServerConfig) {
+    console.log("🏭 ClusterManager created with config:", JSON.stringify(config, null, 2));
+  }
 
   async start(): Promise<void> {
     if (cluster.isPrimary) {
@@ -16,8 +18,6 @@ export class ClusterManager {
   }
 
   private async startPrimary(): Promise<void> {
-    console.log(`Master ${process.pid} is running`);
-
     const workerManager = new WorkerManager(this.config.workerCount, this.config.config);
     workerManager.initializeWorkers();
 
@@ -26,8 +26,6 @@ export class ClusterManager {
   }
 
   private async startWorker(): Promise<void> {
-    console.log(`Worker ${process.pid} started`);
-
     try {
       const configString = process.env.config;
       if (!configString) {
@@ -46,7 +44,7 @@ export class ClusterManager {
             process.send(JSON.stringify(reply));
           }
         } catch (error) {
-          console.error('Error processing message:', error);
+          console.error('👷 Error processing message:', error);
           const errorReply = {
             errorCode: "500",
             error: "Internal worker error"
@@ -57,9 +55,7 @@ export class ClusterManager {
           }
         }
       });
-
     } catch (error) {
-      console.error('Worker initialization failed:', error);
       process.exit(1);
     }
   }
