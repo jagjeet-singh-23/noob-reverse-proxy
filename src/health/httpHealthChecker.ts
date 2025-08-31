@@ -7,6 +7,18 @@ import { parseUpstream } from "../core/utils";
 export class HttpHealthChecker implements IHealthChecker {
   private activeUpstreams = new Set<string>();
   private intervalId: NodeJS.Timeout | null = null;
+  private healthCheckAgent: http.Agent;
+
+  constructor() {
+    // Dedicated agent for health checks with connection pooling
+    this.healthCheckAgent = new http.Agent({
+      keepAlive: true,
+      keepAliveMsecs: 60000,        // Keep health check connections longer
+      maxSockets: 5,                // Fewer sockets needed for health checks
+      maxFreeSockets: 2,            // Keep some health check connections idle
+      timeout: 5000                 // Shorter timeout for health checks
+    });
+  }
 
   async checkHealth(upstream: Upstream): Promise<boolean> {
     try {
@@ -35,8 +47,13 @@ export class HttpHealthChecker implements IHealthChecker {
   private async makeHealthCheckRequest(upstream: Upstream): Promise<number | undefined> {
     const path = this.getHealthCheckPath(upstream.url);
     const useHttps = this.shouldUseHttps(upstream.url);
+
     try {
-      const options = parseUpstream(upstream.url, path);
+      const options = {
+        ...parseUpstream(upstream.url, path),
+        agent: this.healthCheckAgent  // Use pooled connections for health checks
+      };
+
       const requestModule = useHttps ? https : http;
       const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
         const req = requestModule.request(options, resolve);
@@ -81,7 +98,7 @@ export class HttpHealthChecker implements IHealthChecker {
       case 'dummyjson.com':
         return '/products/1';
       case 'localhost:3001':
-        return '/health-check'; // Mock server has this endpoint
+        return '/health-check';
       default:
         return '/health-check';
     }
@@ -115,5 +132,13 @@ export class HttpHealthChecker implements IHealthChecker {
         })
       })
     }, intervalMs);
+  }
+
+  // Cleanup method for graceful shutdown
+  public destroy(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+    this.healthCheckAgent.destroy();
   }
 }
