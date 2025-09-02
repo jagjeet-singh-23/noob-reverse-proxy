@@ -10,10 +10,20 @@ export interface Rule {
   upstreams: string[];
 }
 
+export interface SSLConfig {
+  enabled: boolean;
+  cert?: string;
+  key?: string;
+  port?: number;
+  protocols?: string[];
+  ciphers?: string;
+}
+
 export interface ServerConfig {
   upstreams: Upstream[];
   rules: Rule[];
   loadbalancer?: "round-robin" | "random";
+  ssl?: SSLConfig;
 }
 
 export interface ProxyServerConfig {

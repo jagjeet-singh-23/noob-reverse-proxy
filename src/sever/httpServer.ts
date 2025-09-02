@@ -1,44 +1,91 @@
 import http from "node:http";
+import https from "node:https";
 import { IHttpServer, IWorkerManager } from "../core/interfaces";
 import { WorkerMessageReplyType, WorkerMessageType } from "../core/models";
+import { CertificateManager } from "../ssl/certificateManager";
 
 export class HttpServer implements IHttpServer {
-  private server?: http.Server;
+  private httpServer?: http.Server;
+  private httpsServer?: https.Server;
+  private certificateManager: CertificateManager;
 
   constructor(
     private port: number,
-    private workerManager: IWorkerManager
-  ) { }
+    private workerManager: IWorkerManager,
+    private sslConfig?: any
+  ) {
+    this.certificateManager = new CertificateManager();
+  }
 
   async start(): Promise<void> {
+    // Always start HTTP server
+    await this.startHttpServer();
+
+    // Start HTTPS server if SSL is configured
+    if (this.sslConfig?.enabled) {
+      await this.startHttpsServer();
+    }
+  }
+
+  private async startHttpServer(): Promise<void> {
     return new Promise((resolve) => {
-      this.server = http.createServer(async (req, res) => {
+      this.httpServer = http.createServer(async (req, res) => {
         try {
           await this.handleRequest(req, res);
         } catch (error) {
-          console.error('Error handling request:', error);
+          console.error('Error handling HTTP request:', error);
           this.sendErrorResponse(res, 500, 'Internal server error');
         }
       });
 
-      this.server.listen(this.port, () => {
-        console.log(`Reverse Proxy Server running on http://localhost:${this.port}`);
+      this.httpServer.listen(this.port, () => {
+        console.log(`🌐 HTTP Reverse Proxy Server running on http://localhost:${this.port}`);
         resolve();
       });
     });
   }
 
-  async stop(): Promise<void> {
-    return new Promise((resolve) => {
-      if (this.server) {
-        this.server.close(() => {
-          console.log('Server stopped');
+  private async startHttpsServer(): Promise<void> {
+    try {
+      let sslCredentials;
+
+      if (this.sslConfig.cert && this.sslConfig.key) {
+        // Load provided certificates
+        sslCredentials = await this.certificateManager.loadCertificate(
+          this.sslConfig.cert,
+          this.sslConfig.key
+        );
+      } else {
+        // Generate self-signed for development
+        sslCredentials = await this.certificateManager.createSelfSignedCertificate();
+      }
+
+      const sslOptions = {
+        cert: sslCredentials.cert,
+        key: sslCredentials.key,
+        ...this.certificateManager.getDefaultSSLOptions()
+      };
+
+      return new Promise((resolve) => {
+        this.httpsServer = https.createServer(sslOptions, async (req, res) => {
+          try {
+            await this.handleRequest(req, res);
+          } catch (error) {
+            console.error('Error handling HTTPS request:', error);
+            this.sendErrorResponse(res, 500, 'Internal server error');
+          }
+        });
+
+        const sslPort = this.sslConfig.port || 8443;
+        this.httpsServer.listen(sslPort, () => {
+          console.log(`🔐 HTTPS Reverse Proxy Server running on https://localhost:${sslPort}`);
           resolve();
         });
-      } else {
-        resolve();
-      }
-    });
+      });
+
+    } catch (error) {
+      console.error('❌ Failed to start HTTPS server:', error); console.log('📝 Continuing with HTTP only...');
+    }
   }
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -75,7 +122,11 @@ export class HttpServer implements IHttpServer {
     if (reply.errorCode) {
       this.sendErrorResponse(res, parseInt(reply.errorCode), reply.error || 'Unknown error');
     } else {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.writeHead(200, {
+        'Content-Type': 'text/plain',
+        'X-Proxy-Version': 'NGINX-Style-v1.0',
+        'X-Connection-Pool': 'Enabled'
+      });
       res.end(reply.data || '');
     }
   }
@@ -85,5 +136,29 @@ export class HttpServer implements IHttpServer {
       res.writeHead(statusCode, { 'Content-Type': 'text/plain' });
       res.end(message);
     }
+  }
+
+  async stop(): Promise<void> {
+    const promises: Promise<void>[] = [];
+
+    if (this.httpServer) {
+      promises.push(new Promise((resolve) => {
+        this.httpServer!.close(() => {
+          console.log('HTTP Server stopped');
+          resolve();
+        });
+      }));
+    }
+
+    if (this.httpsServer) {
+      promises.push(new Promise((resolve) => {
+        this.httpsServer!.close(() => {
+          console.log('HTTPS Server stopped');
+          resolve();
+        });
+      }));
+    }
+
+    await Promise.all(promises);
   }
 }
