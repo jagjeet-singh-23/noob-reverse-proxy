@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  reverse-proxy-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: nginx-proxy-dev
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+      - "9229:9229"  # Node.js debugging port
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - NODE_ENV=development
+      - DEBUG=*
+    networks:
+      - proxy-network
+    command: ["npm", "run", "dev"]
+    restart: unless-stopped
+
+  mock-upstream-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
+    container_name: mock-upstream-dev
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./src/tests:/app/src/tests
+    networks:
+      - proxy-network
+    environment:
+      - NODE_ENV=development
